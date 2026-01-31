@@ -4,18 +4,20 @@
   import Button from '../Common/Button.svelte';
   import Badge from '../Common/Badge.svelte';
   import Icon from '../Common/Icon.svelte';
+  import { sessionsWithRepos } from '../../stores/repos.js';
+  import { runs } from '../../stores/runs.js';
+  import { ui } from '../../stores/ui.js';
+  import { submitCommand, pauseSession, resumeSession, stopSession } from '../../api/client.js';
+  import { toasts } from '../../stores/toasts.js';
 
   export let collapsed = false;
   export let onToggle = null;
 
-  let selectedRepo = 'repo-beta';
   let promptText = '';
-
-  const repos = [
-    { id: 'repo-alpha', name: 'repo-alpha', status: 'idle' },
-    { id: 'repo-beta', name: 'repo-beta', status: 'working' },
-    { id: 'repo-gamma', name: 'repo-gamma', status: 'blocked' },
-  ];
+  let repoOptions = [];
+  let hasRepo = false;
+  let isSubmitting = false;
+  let selectedTemplateId = null;
 
   const templates = [
     { id: 'analyze', name: 'Analyze Codebase', prompt: 'Analyze the codebase structure and provide an overview...' },
@@ -23,20 +25,152 @@
     { id: 'research', name: 'Research Topic', prompt: 'Research and summarize information about...' },
   ];
 
-  const taskQueue = [
-    { id: 1, title: 'Analyze market trends', status: 'in_progress' },
-    { id: 2, title: 'Generate summary report', status: 'pending' },
-  ];
+  const STATUS_LABELS = {
+    queued: 'Queued',
+    running: 'Running',
+    paused: 'Paused',
+    blocked: 'Blocked',
+    error: 'Error',
+    done: 'Done',
+  };
+
+  const STATUS_VARIANTS = {
+    queued: 'working',
+    running: 'working',
+    paused: 'idle',
+    blocked: 'blocked',
+    error: 'error',
+    done: 'idle',
+  };
+
+  $: repoOptions = $sessionsWithRepos.map((session) => ({
+    id: session.id,
+    name: session.repo?.label || session.repoId,
+    status: session.status,
+  }));
+
+  $: if (repoOptions.length > 0) {
+    const selected = repoOptions.find((repo) => repo.id === $ui.selectedSessionId);
+    if (!selected) {
+      ui.setSelectedSessionId(repoOptions[0].id);
+    }
+  }
+
+  $: hasRepo = repoOptions.length > 0;
+  $: selectedSession = $sessionsWithRepos.find((session) => session.id === $ui.selectedSessionId);
+  $: sessionRuns = $runs.filter((run) => run.sessionId === $ui.selectedSessionId);
+  $: taskQueue = sessionRuns.filter((run) => ['queued', 'running', 'paused'].includes(run.status));
+  $: activeRun = selectedSession?.latestRun || null;
+  $: canPause = activeRun && activeRun.status !== 'paused' && activeRun.status !== 'done';
+  $: canResume = activeRun && activeRun.status === 'paused';
+  $: canStop = activeRun && activeRun.status !== 'done';
+  $: pauseLabel = canResume ? 'Resume' : 'Pause';
+  $: pauseIcon = canResume ? 'play' : 'pause';
 
   function selectTemplate(template) {
     promptText = template.prompt;
+    selectedTemplateId = template.id;
   }
 
-  function handleSubmit() {
-    if (promptText.trim()) {
-      console.log('Submitting:', promptText);
-      // Will connect to backend later
+  function handleSessionChange(event) {
+    ui.setSelectedSessionId(event.target.value);
+  }
+
+  async function startRun({ prompt, templateId } = {}) {
+    if (!hasRepo || !prompt?.trim()) return;
+    isSubmitting = true;
+    try {
+      const response = await submitCommand({
+        sessionId: $ui.selectedSessionId,
+        prompt: prompt.trim(),
+        templateId,
+        repoPath: selectedSession?.repo?.path || '',
+        profile: selectedSession?.repo?.profile || '',
+      });
+
+      const run = runs.startRun($ui.selectedSessionId, prompt.trim(), templateId, {
+        id: response.runId,
+        status: response.status || 'queued',
+      });
+
+      runs.appendOutput(run.id, {
+        type: 'log',
+        level: 'info',
+        message: `Command queued: ${prompt.trim()}`,
+      });
+
+      setTimeout(() => {
+        runs.updateRun(run.id, { status: 'running' });
+        runs.appendOutput(run.id, {
+          type: 'log',
+          level: 'info',
+          message: 'Session is running.',
+        });
+      }, 500);
+
+      promptText = '';
+      selectedTemplateId = null;
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to submit command.' });
+    } finally {
+      isSubmitting = false;
     }
+  }
+
+  async function handleSubmit() {
+    if (!hasRepo || !promptText.trim()) return;
+    await startRun({ prompt: promptText, templateId: selectedTemplateId });
+  }
+
+  async function handleStart() {
+    const prompt = promptText.trim() || 'Start session';
+    await startRun({ prompt });
+  }
+
+  async function handlePause() {
+    if (!activeRun) return;
+    try {
+      await pauseSession($ui.selectedSessionId);
+      runs.updateRun(activeRun.id, { status: 'paused' });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to pause session.' });
+    }
+  }
+
+  async function handleResume() {
+    if (!activeRun) return;
+    try {
+      await resumeSession($ui.selectedSessionId);
+      runs.updateRun(activeRun.id, { status: 'running' });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to resume session.' });
+    }
+  }
+
+  async function handleStop() {
+    if (!activeRun) return;
+    try {
+      await stopSession($ui.selectedSessionId);
+      runs.updateRun(activeRun.id, { status: 'blocked' });
+      runs.appendOutput(activeRun.id, {
+        type: 'log',
+        level: 'warning',
+        message: 'Session stopped.',
+      });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to stop session.' });
+    }
+  }
+
+  async function handleRestart() {
+    if (!activeRun) return handleStart();
+    await handleStop();
+    await handleStart();
+  }
+
+  function handleRemoveTask(runId) {
+    if (!runId) return;
+    runs.updateRun(runId, { status: 'done' });
   }
 </script>
 
@@ -45,32 +179,49 @@
     <!-- Session Selector -->
     <div class="section">
       <label class="section-label">Active Session</label>
-      <select class="session-select" bind:value={selectedRepo}>
-        {#each repos as repo}
-          <option value={repo.id}>
-            {repo.name} ({repo.status})
-          </option>
-        {/each}
+      <select
+        class="session-select"
+        value={$ui.selectedSessionId}
+        on:change={handleSessionChange}
+        disabled={!hasRepo}
+      >
+        {#if !hasRepo}
+          <option value="" disabled>No repositories configured</option>
+        {:else}
+          {#each repoOptions as repo}
+            <option value={repo.id}>
+              {repo.name} ({repo.status})
+            </option>
+          {/each}
+        {/if}
       </select>
+      {#if !hasRepo}
+        <p class="empty-note">Add repositories in settings to enable sessions.</p>
+      {/if}
     </div>
 
     <!-- Quick Actions -->
     <div class="section">
       <label class="section-label">Quick Actions</label>
       <div class="action-grid">
-        <Button variant="accent" size="sm">
+        <Button variant="accent" size="sm" disabled={!hasRepo} on:click={handleStart}>
           <Icon name="play" size={14} />
           Start
         </Button>
-        <Button variant="default" size="sm">
-          <Icon name="pause" size={14} />
-          Pause
+        <Button
+          variant="default"
+          size="sm"
+          disabled={!hasRepo || (!canPause && !canResume)}
+          on:click={canResume ? handleResume : handlePause}
+        >
+          <Icon name={pauseIcon} size={14} />
+          {pauseLabel}
         </Button>
-        <Button variant="danger" size="sm">
+        <Button variant="danger" size="sm" disabled={!hasRepo || !canStop} on:click={handleStop}>
           <Icon name="stop" size={14} />
           Stop
         </Button>
-        <Button variant="ghost" size="sm">
+        <Button variant="ghost" size="sm" disabled={!hasRepo} on:click={handleRestart}>
           <Icon name="refresh" size={14} />
           Restart
         </Button>
@@ -86,8 +237,15 @@
           bind:value={promptText}
           placeholder="Enter command or select a template..."
           rows="4"
+          disabled={!hasRepo || isSubmitting}
+          on:input={() => selectedTemplateId = null}
         />
-        <Button variant="accent" on:click={handleSubmit} disabled={!promptText.trim()}>
+        <Button
+          variant="accent"
+          on:click={handleSubmit}
+          disabled={!hasRepo || !promptText.trim() || isSubmitting}
+          loading={isSubmitting}
+        >
           <Icon name="chevron-right" size={16} />
           Execute
         </Button>
@@ -115,17 +273,17 @@
         {#each taskQueue as task}
           <div class="task-item">
             <div class="task-info">
-              <span class="task-title">{task.title}</span>
+              <span class="task-title">{task.prompt || 'Queued task'}</span>
               <Badge
-                variant={task.status === 'in_progress' ? 'working' : 'idle'}
+                variant={STATUS_VARIANTS[task.status] || 'default'}
                 size="sm"
                 dot
-                pulse={task.status === 'in_progress'}
+                pulse={task.status === 'running' || task.status === 'queued'}
               >
-                {task.status === 'in_progress' ? 'Running' : 'Pending'}
+                {STATUS_LABELS[task.status] || task.status}
               </Badge>
             </div>
-            <button class="task-action" title="Remove task">
+            <button class="task-action" title="Remove task" on:click={() => handleRemoveTask(task.id)}>
               <Icon name="x" size={14} />
             </button>
           </div>
@@ -187,6 +345,17 @@
     border-color: var(--color-accent);
   }
 
+  .session-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .empty-note {
+    margin-top: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+
   .action-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -224,6 +393,11 @@
 
   .prompt-input::placeholder {
     color: var(--color-text-muted);
+  }
+
+  .prompt-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .templates-list {

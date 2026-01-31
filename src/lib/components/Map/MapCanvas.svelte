@@ -3,6 +3,7 @@
   import { Application, Graphics, Container, Text, TextStyle } from 'pixi.js';
   import { theme } from '../../stores/theme.js';
   import { repos, sessions, sessionsWithRepos, STATUS_COLORS, REPO_COLORS } from '../../stores/repos.js';
+  import { ui } from '../../stores/ui.js';
   import Icon from '../Common/Icon.svelte';
 
   const dispatch = createEventDispatcher();
@@ -21,18 +22,19 @@
   const MIN_SCALE = 0.25;
   const MAX_SCALE = 2;
   const GRID_SIZE = 40;
+  const UNIT_WIDTH = 100;
+  const UNIT_HEIGHT = 120;
 
   // Selection and drag state
   let selectedSessionId = null;
   let isDraggingUnit = false;
   let draggedSessionId = null;
   let dragOffset = { x: 0, y: 0 };
+  let lastDragPosition = null;
   let lastClickTime = 0;
   const DOUBLE_CLICK_THRESHOLD = 300;
 
-  // Context menu state (exported for parent component)
-  export let contextMenuPos = null;
-  export let contextMenuSessionId = null;
+  $: selectedSessionId = $ui.selectedSessionId;
 
   // Colors for light/dark themes
   const colors = {
@@ -71,6 +73,7 @@
   }
 
   $: if (unitsContainer && currentSessions) {
+    selectedSessionId;
     redrawUnits();
   }
 
@@ -336,10 +339,15 @@
     if (!unitsContainer) return;
 
     // Clear existing units
-    unitsContainer.removeChildren();
+    const oldUnits = unitsContainer.removeChildren();
+    oldUnits.forEach((child) => {
+      if (child?.destroy) {
+        child.destroy({ children: true, texture: true, baseTexture: true });
+      }
+    });
 
-    const unitWidth = 100;
-    const unitHeight = 120;
+    const unitWidth = UNIT_WIDTH;
+    const unitHeight = UNIT_HEIGHT;
 
     currentSessions.forEach(session => {
       const unitContainer = new Container();
@@ -491,15 +499,19 @@
     lastClickTime = now;
 
     if (isDoubleClick) {
+      ui.setSelectedSessionId(sessionId);
       // Double-click: dispatch inspect event
       dispatch('inspect', { sessionId });
       return;
     }
 
     // Single click: select and start potential drag
-    selectedSessionId = sessionId;
+    ui.setSelectedSessionId(sessionId);
+    ui.setIntelTab('terminal');
+    ui.closeContextMenu();
     isDraggingUnit = true;
     draggedSessionId = sessionId;
+    lastDragPosition = null;
 
     // Calculate offset from unit origin to mouse position
     const localPos = e.getLocalPosition(unitContainer.parent);
@@ -514,22 +526,25 @@
     e.stopPropagation();
 
     // Select the unit
-    selectedSessionId = sessionId;
+    ui.setSelectedSessionId(sessionId);
 
     // Get screen position for context menu
     const rect = containerEl.getBoundingClientRect();
     const globalPos = e.global;
+    const domEvent = e.originalEvent ?? e;
+    const clientX = typeof domEvent.clientX === 'number'
+      ? domEvent.clientX
+      : rect.left + globalPos.x;
+    const clientY = typeof domEvent.clientY === 'number'
+      ? domEvent.clientY
+      : rect.top + globalPos.y;
 
-    contextMenuSessionId = sessionId;
-    contextMenuPos = {
-      x: globalPos.x,
-      y: globalPos.y
-    };
+    ui.openContextMenu(sessionId, { x: clientX, y: clientY });
 
     dispatch('contextmenu', {
       sessionId,
-      x: globalPos.x,
-      y: globalPos.y
+      x: clientX,
+      y: clientY
     });
 
     redrawUnits();
@@ -541,24 +556,28 @@
     const localPos = e.getLocalPosition(worldContainer);
     const newX = localPos.x - dragOffset.x;
     const newY = localPos.y - dragOffset.y;
+    lastDragPosition = { x: newX, y: newY };
 
     // Update session position in store
-    sessions.updatePosition(draggedSessionId, { x: newX, y: newY });
+    sessions.updatePosition(draggedSessionId, { x: newX, y: newY }, { persist: false });
   }
 
   function handleStageDragEnd() {
     if (isDraggingUnit) {
+      if (draggedSessionId && lastDragPosition) {
+        sessions.updatePosition(draggedSessionId, lastDragPosition, { persist: true });
+      }
       isDraggingUnit = false;
       draggedSessionId = null;
+      lastDragPosition = null;
       containerEl.style.cursor = 'grab';
     }
   }
 
   function clearSelection() {
     if (!isDraggingUnit) {
-      selectedSessionId = null;
-      contextMenuPos = null;
-      contextMenuSessionId = null;
+      ui.setSelectedSessionId(null);
+      ui.closeContextMenu();
       redrawUnits();
     }
   }
@@ -644,10 +663,30 @@
     worldContainer.x = app.screen.width / 2 - 300;
     worldContainer.y = app.screen.height / 2 - 250;
   }
+
+  export function focusSession(sessionId) {
+    if (!app || !worldContainer || !sessionId) return;
+    const session = currentSessions.find((item) => item.id === sessionId);
+    if (!session) return;
+
+    const targetX = session.position.x + UNIT_WIDTH / 2;
+    const targetY = session.position.y + UNIT_HEIGHT / 2;
+    const centerX = app.screen.width / 2;
+    const centerY = app.screen.height / 2;
+
+    worldContainer.x = centerX - targetX * scale;
+    worldContainer.y = centerY - targetY * scale;
+  }
 </script>
 
 <div class="map-canvas" bind:this={containerEl}>
   <!-- Pixi canvas is appended here -->
+
+  {#if $repos.length === 0}
+    <div class="map-empty">
+      No repositories configured. Add one in settings to populate the map.
+    </div>
+  {/if}
 
   <div class="map-controls">
     <button class="control-btn" on:click={zoomIn} title="Zoom In">
@@ -726,5 +765,22 @@
   .control-btn:active {
     background: var(--color-accent);
     color: var(--color-primary);
+  }
+
+  .map-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--color-text-muted);
+    background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+    border: 1px dashed var(--color-border);
+    margin: var(--space-6);
+    z-index: var(--z-overlay);
+    pointer-events: none;
+    font-size: var(--text-sm);
   }
 </style>

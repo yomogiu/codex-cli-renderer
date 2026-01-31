@@ -3,31 +3,38 @@
   import Accordion from '../Common/Accordion.svelte';
   import Badge from '../Common/Badge.svelte';
   import Icon from '../Common/Icon.svelte';
+  import TerminalTab from './TerminalTab.svelte';
+  import CodexTab from './CodexTab.svelte';
+  import { runs } from '../../stores/runs.js';
+  import { ui } from '../../stores/ui.js';
 
   export let collapsed = false;
   export let onToggle = null;
 
-  let activeTab = 'logs';
   const tabs = [
-    { id: 'logs', label: 'Logs', icon: 'terminal' },
+    { id: 'terminal', label: 'Terminal', icon: 'terminal' },
+    { id: 'logs', label: 'Logs', icon: 'file-text' },
+    { id: 'codex', label: 'Codex', icon: 'code' },
     { id: 'artifacts', label: 'Artifacts', icon: 'folder' },
     { id: 'context', label: 'Context', icon: 'layers' }
   ];
 
-  // Demo data
-  const recentLogs = [
-    { time: '11:45:23', level: 'info', message: 'Session started for repo-beta' },
-    { time: '11:45:24', level: 'info', message: 'Loading context packs...' },
-    { time: '11:45:26', level: 'success', message: 'Context loaded successfully' },
-    { time: '11:46:01', level: 'info', message: 'Processing task: analyze codebase' },
-    { time: '11:47:15', level: 'warning', message: 'Large file detected, skipping binary' },
-  ];
+  function formatTime(timestamp) {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
 
-  const artifacts = [
-    { name: 'market-analysis.md', type: 'memo', date: '2 min ago' },
-    { name: 'tech-review.md', type: 'memo', date: '15 min ago' },
-    { name: 'context-q1.json', type: 'context-pack', date: '1 hour ago' },
-  ];
+  $: selectedSessionId = $ui.selectedSessionId;
+  $: sessionRuns = $runs.filter((run) => run.sessionId === selectedSessionId);
+  $: outputEntries = sessionRuns.flatMap((run) =>
+    run.outputs.map((entry) => ({ ...entry, runId: run.id }))
+  );
+  $: logEntries = outputEntries.filter((entry) => entry.type === 'log' || entry.type === 'error');
+  $: artifactEntries = outputEntries.filter((entry) => entry.type === 'artifact');
+  $: sortedLogs = logEntries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  $: sortedArtifacts = artifactEntries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 </script>
 
 <div class="intel-panel">
@@ -36,8 +43,8 @@
       {#each tabs as tab}
         <button
           class="tab"
-          class:active={activeTab === tab.id}
-          on:click={() => activeTab = tab.id}
+          class:active={$ui.intelTab === tab.id}
+          on:click={() => ui.setIntelTab(tab.id)}
         >
           <Icon name={tab.icon} size={14} />
           {tab.label}
@@ -45,40 +52,53 @@
       {/each}
     </div>
 
-    <div class="tab-content">
-      {#if activeTab === 'logs'}
+    <div class="tab-content" class:terminal={$ui.intelTab === 'terminal'}>
+      {#if $ui.intelTab === 'terminal'}
+        <TerminalTab />
+      {:else if $ui.intelTab === 'logs'}
         <div class="logs-list">
-          {#each recentLogs as log}
-            <div class="log-entry log-{log.level}">
-              <span class="log-time">{log.time}</span>
-              <span class="log-message">{log.message}</span>
-            </div>
-          {/each}
-        </div>
-      {:else if activeTab === 'artifacts'}
-        <div class="artifacts-list">
-          {#each artifacts as artifact}
-            <div class="artifact-item">
-              <Icon name={artifact.type === 'memo' ? 'scroll' : 'book'} size={16} />
-              <div class="artifact-info">
-                <span class="artifact-name">{artifact.name}</span>
-                <span class="artifact-date">{artifact.date}</span>
+          {#if !selectedSessionId}
+            <p class="empty-state">Select a session to view logs.</p>
+          {:else if sortedLogs.length === 0}
+            <p class="empty-state">No logs yet.</p>
+          {:else}
+            {#each sortedLogs as log}
+              <div class="log-entry log-{log.level || 'info'}">
+                <span class="log-time">{formatTime(log.timestamp)}</span>
+                <span class="log-message">{log.message || log.text || 'Log entry'}</span>
               </div>
-              <Badge variant="default" size="sm">{artifact.type}</Badge>
-            </div>
-          {/each}
+            {/each}
+          {/if}
         </div>
-      {:else if activeTab === 'context'}
+      {:else if $ui.intelTab === 'codex'}
+        <CodexTab />
+      {:else if $ui.intelTab === 'artifacts'}
+        <div class="artifacts-list">
+          {#if !selectedSessionId}
+            <p class="empty-state">Select a session to view artifacts.</p>
+          {:else if sortedArtifacts.length === 0}
+            <p class="empty-state">No artifacts yet.</p>
+          {:else}
+            {#each sortedArtifacts as artifact}
+              <div class="artifact-item">
+                <Icon name={artifact.kind === 'memo' ? 'scroll' : 'book'} size={16} />
+                <div class="artifact-info">
+                  <span class="artifact-name">{artifact.name || 'Artifact'}</span>
+                  <span class="artifact-date">{formatTime(artifact.timestamp)}</span>
+                </div>
+                <Badge variant="default" size="sm">{artifact.kind || 'artifact'}</Badge>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      {:else if $ui.intelTab === 'context'}
         <div class="context-section">
           <Accordion title="Active Context Packs" open>
-            <div class="context-pack">
-              <Icon name="book" size={14} />
-              <span>market-research-2024</span>
-            </div>
-            <div class="context-pack">
-              <Icon name="book" size={14} />
-              <span>codebase-overview</span>
-            </div>
+            {#if !selectedSessionId}
+              <p class="empty-state">Select a session to view context packs.</p>
+            {:else}
+              <p class="empty-state">No context packs loaded.</p>
+            {/if}
           </Accordion>
           <Accordion title="Knowledge Base">
             <p class="empty-state">No KB cards loaded</p>
@@ -139,6 +159,10 @@
   .tab-content {
     flex: 1;
     overflow-y: auto;
+  }
+
+  .tab-content.terminal {
+    overflow: hidden;
   }
 
   /* Logs */

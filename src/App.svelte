@@ -1,22 +1,30 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { theme } from './lib/stores/theme.js';
+  import { ui } from './lib/stores/ui.js';
+  import { sessions, repos } from './lib/stores/repos.js';
+  import { runs, mapRunStatusToSessionStatus } from './lib/stores/runs.js';
+  import { codexEvents } from './lib/stores/codexEvents.js';
+  import { connectionStatus } from './lib/stores/connection.js';
+  import { connect, disconnect, onMessage } from './lib/api/stream.js';
+  import { pauseSession, resumeSession, stopSession } from './lib/api/client.js';
+  import { toasts } from './lib/stores/toasts.js';
   import ThemeToggle from './lib/components/Config/ThemeToggle.svelte';
+  import RepoConfigModal from './lib/components/Config/RepoConfigModal.svelte';
+  import Icon from './lib/components/Common/Icon.svelte';
+  import Toast from './lib/components/Common/Toast.svelte';
+  import SessionContextMenu from './lib/components/Map/SessionContextMenu.svelte';
   import MapCanvas from './lib/components/Map/MapCanvas.svelte';
   import IntelPanel from './lib/components/Panels/IntelPanel.svelte';
   import CommandPanel from './lib/components/Panels/CommandPanel.svelte';
 
-  // Panel collapse state
-  let leftPanelCollapsed = false;
-  let rightPanelCollapsed = false;
+  let configOpen = false;
 
   // Panel width state (for drag-to-resize)
   const MIN_WIDTH = 280;
   const MAX_WIDTH = 400;
   const DEFAULT_WIDTH = 320;
-
-  let leftPanelWidth = DEFAULT_WIDTH;
-  let rightPanelWidth = DEFAULT_WIDTH;
 
   // Resize state
   let isResizing = null; // 'left' | 'right' | null
@@ -26,26 +34,43 @@
   // Tablet breakpoint detection
   let isTablet = false;
   let mediaQuery;
+  let mapRef;
+
+  function clampWidth(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return DEFAULT_WIDTH;
+    return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parsed));
+  }
+
+  $: leftPanelWidth = clampWidth($ui.leftPanelWidth);
+  $: rightPanelWidth = clampWidth($ui.rightPanelWidth);
 
   onMount(() => {
-    // Load persisted widths
-    const savedLeft = localStorage.getItem('leftPanelWidth');
-    const savedRight = localStorage.getItem('rightPanelWidth');
-    if (savedLeft) leftPanelWidth = parseInt(savedLeft, 10);
-    if (savedRight) rightPanelWidth = parseInt(savedRight, 10);
-
     mediaQuery = window.matchMedia('(max-width: 1200px)');
     isTablet = mediaQuery.matches;
 
     // Auto-collapse panels on tablet
     if (isTablet) {
-      leftPanelCollapsed = true;
-      rightPanelCollapsed = true;
+      ui.setPanelCollapsed('left', true, { persist: false });
+      ui.setPanelCollapsed('right', true, { persist: false });
+    } else {
+      const { leftPanelCollapsed, rightPanelCollapsed } = get(ui);
+      if (leftPanelCollapsed || rightPanelCollapsed) {
+        ui.setPanelCollapsed('left', false, { persist: false });
+        ui.setPanelCollapsed('right', false, { persist: false });
+      }
     }
 
     mediaQuery.addEventListener('change', handleMediaChange);
     window.addEventListener('mousemove', handleResizeMove);
     window.addEventListener('mouseup', handleResizeEnd);
+
+    connect();
+    const unsubscribe = onMessage(handleStreamMessage);
+
+    return () => {
+      unsubscribe();
+    };
   });
 
   onDestroy(() => {
@@ -54,39 +79,51 @@
     }
     window.removeEventListener('mousemove', handleResizeMove);
     window.removeEventListener('mouseup', handleResizeEnd);
+    disconnect();
   });
 
   function handleMediaChange(e) {
     isTablet = e.matches;
     if (isTablet) {
-      leftPanelCollapsed = true;
-      rightPanelCollapsed = true;
+      ui.setPanelCollapsed('left', true, { persist: false });
+      ui.setPanelCollapsed('right', true, { persist: false });
+    } else {
+      ui.setPanelCollapsed('left', false, { persist: false });
+      ui.setPanelCollapsed('right', false, { persist: false });
     }
   }
 
   function toggleLeftPanel() {
-    leftPanelCollapsed = !leftPanelCollapsed;
+    ui.togglePanel('left');
   }
 
   function toggleRightPanel() {
-    rightPanelCollapsed = !rightPanelCollapsed;
+    ui.togglePanel('right');
+  }
+
+  function openConfig() {
+    configOpen = true;
+  }
+
+  function closeConfig() {
+    configOpen = false;
   }
 
   // Resize handlers
   function startResizeLeft(e) {
-    if (leftPanelCollapsed) return;
+    if ($ui.leftPanelCollapsed) return;
     isResizing = 'left';
     resizeStartX = e.clientX;
-    resizeStartWidth = leftPanelWidth;
+    resizeStartWidth = $ui.leftPanelWidth;
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
   }
 
   function startResizeRight(e) {
-    if (rightPanelCollapsed) return;
+    if ($ui.rightPanelCollapsed) return;
     isResizing = 'right';
     resizeStartX = e.clientX;
-    resizeStartWidth = rightPanelWidth;
+    resizeStartWidth = $ui.rightPanelWidth;
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
   }
@@ -99,19 +136,19 @@
     if (isResizing === 'left') {
       // Left panel: dragging right edge, so positive delta = wider
       const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, resizeStartWidth + delta));
-      leftPanelWidth = newWidth;
+      ui.setPanelWidth('left', newWidth, { persist: false });
     } else if (isResizing === 'right') {
       // Right panel: dragging left edge, so positive delta = narrower
       const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, resizeStartWidth - delta));
-      rightPanelWidth = newWidth;
+      ui.setPanelWidth('right', newWidth, { persist: false });
     }
   }
 
   function handleResizeEnd() {
     if (isResizing) {
       // Persist widths
-      localStorage.setItem('leftPanelWidth', leftPanelWidth.toString());
-      localStorage.setItem('rightPanelWidth', rightPanelWidth.toString());
+      ui.setPanelWidth('left', clampWidth($ui.leftPanelWidth), { persist: true });
+      ui.setPanelWidth('right', clampWidth($ui.rightPanelWidth), { persist: true });
 
       isResizing = null;
       document.body.style.cursor = '';
@@ -121,11 +158,118 @@
 
   // Map canvas event handlers
   function handleInspect(e) {
-    console.log('Inspect session:', e.detail.sessionId);
+    ui.setSelectedSessionId(e.detail.sessionId);
+    ui.setIntelTab('terminal');
   }
 
   function handleContextMenu(e) {
-    console.log('Context menu for session:', e.detail.sessionId, 'at', e.detail.x, e.detail.y);
+    // Context menu state is managed in the ui store.
+  }
+
+  function handleFocus(e) {
+    ui.setSelectedSessionId(e.detail.sessionId);
+    mapRef?.focusSession?.(e.detail.sessionId);
+  }
+
+  function handleOpenLogs(e) {
+    ui.setSelectedSessionId(e.detail.sessionId);
+    ui.setIntelTab('logs');
+  }
+
+  function getLatestRunId(sessionId) {
+    const runsList = get(runs);
+    const sessionRuns = runsList.filter((run) => run.sessionId === sessionId);
+    if (sessionRuns.length === 0) return null;
+    return sessionRuns.reduce((latest, run) => {
+      const latestTime = latest?.lastUpdateAt || latest?.startedAt || '';
+      const runTime = run.lastUpdateAt || run.startedAt || '';
+      return runTime > latestTime ? run : latest;
+    }, sessionRuns[0]).id;
+  }
+
+  async function handlePause(e) {
+    try {
+      await pauseSession(e.detail.sessionId);
+      const runId = getLatestRunId(e.detail.sessionId);
+      if (runId) runs.updateRun(runId, { status: 'paused' });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to pause session.' });
+    }
+  }
+
+  async function handleResume(e) {
+    try {
+      await resumeSession(e.detail.sessionId);
+      const runId = getLatestRunId(e.detail.sessionId);
+      if (runId) runs.updateRun(runId, { status: 'running' });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to resume session.' });
+    }
+  }
+
+  async function handleStop(e) {
+    try {
+      await stopSession(e.detail.sessionId);
+      const runId = getLatestRunId(e.detail.sessionId);
+      if (runId) runs.updateRun(runId, { status: 'blocked' });
+    } catch (error) {
+      toasts.add({ variant: 'error', message: error?.message || 'Failed to stop session.' });
+    }
+  }
+
+  function handleStreamMessage(message) {
+    if (!message || typeof message !== 'object') return;
+
+    switch (message.type) {
+      case 'session.update': {
+        if (message.sessionId) {
+          const patch = {};
+          if (message.status) {
+            const runStatuses = ['queued', 'running', 'paused', 'blocked', 'error', 'done'];
+            patch.status = runStatuses.includes(message.status)
+              ? mapRunStatusToSessionStatus(message.status)
+              : message.status;
+          }
+          if (message.runId) patch.runId = message.runId;
+          if (Number.isFinite(message.taskCount)) patch.taskCount = message.taskCount;
+          if (Object.keys(patch).length > 0) {
+            sessions.updateSession(message.sessionId, patch);
+          }
+        }
+        break;
+      }
+      case 'run.output': {
+        if (message.runId && message.entry) {
+          runs.appendOutput(message.runId, message.entry);
+        }
+        break;
+      }
+      case 'run.status': {
+        if (message.runId) {
+          runs.updateRun(message.runId, { status: message.status });
+        }
+        break;
+      }
+      case 'repo.update': {
+        if (message.repoId) {
+          repos.updateRepo(message.repoId, message.patch || {});
+        }
+        break;
+      }
+      case 'codex.event': {
+        if (message.sessionId) {
+          codexEvents.appendEvent({
+            sessionId: message.sessionId,
+            runId: message.runId || null,
+            eventType: message.eventType || message.kind || 'event',
+            message: message.message || '',
+            payload: message.payload ?? null,
+            timestamp: message.timestamp,
+          });
+        }
+        break;
+      }
+    }
   }
 </script>
 
@@ -133,18 +277,47 @@
   <header class="topbar">
     <h1 class="title">Codex CLI Renderer</h1>
     <div class="topbar-actions">
+      <div class="connection-status status-{$connectionStatus}">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-label">{$connectionStatus}</span>
+      </div>
+      <button
+        class="panel-toggle"
+        on:click={toggleLeftPanel}
+        title={$ui.leftPanelCollapsed ? 'Show Intel panel' : 'Hide Intel panel'}
+        aria-label={$ui.leftPanelCollapsed ? 'Show Intel panel' : 'Hide Intel panel'}
+      >
+        <Icon name={$ui.leftPanelCollapsed ? 'chevron-right' : 'chevron-left'} size={16} />
+      </button>
+      <button
+        class="panel-toggle"
+        on:click={toggleRightPanel}
+        title={$ui.rightPanelCollapsed ? 'Show Command panel' : 'Hide Command panel'}
+        aria-label={$ui.rightPanelCollapsed ? 'Show Command panel' : 'Hide Command panel'}
+      >
+        <Icon name={$ui.rightPanelCollapsed ? 'chevron-left' : 'chevron-right'} size={16} />
+      </button>
+      <button class="config-btn" on:click={openConfig} title="Configure repositories">
+        <Icon name="settings" size={18} />
+      </button>
       <ThemeToggle />
     </div>
   </header>
 
+  {#if $connectionStatus !== 'online'}
+    <div class="offline-banner">
+      {$connectionStatus === 'reconnecting' ? 'Reconnecting to live updates…' : 'Offline: live updates are unavailable.'}
+    </div>
+  {/if}
+
   <main class="workspace">
     <aside
       class="panel-left"
-      class:collapsed={leftPanelCollapsed}
-      style:width={leftPanelCollapsed ? 'var(--panel-collapsed-width)' : `${leftPanelWidth}px`}
+      class:collapsed={$ui.leftPanelCollapsed}
+      style:width={$ui.leftPanelCollapsed ? 'var(--panel-collapsed-width)' : `${leftPanelWidth}px`}
     >
-      <IntelPanel collapsed={leftPanelCollapsed} onToggle={toggleLeftPanel} />
-      {#if !leftPanelCollapsed}
+      <IntelPanel collapsed={$ui.leftPanelCollapsed} onToggle={toggleLeftPanel} />
+      {#if !$ui.leftPanelCollapsed}
         <div
           class="resize-handle resize-handle-right"
           on:mousedown={startResizeLeft}
@@ -155,15 +328,15 @@
     </aside>
 
     <section class="map-container">
-      <MapCanvas on:inspect={handleInspect} on:contextmenu={handleContextMenu} />
+      <MapCanvas bind:this={mapRef} on:inspect={handleInspect} on:contextmenu={handleContextMenu} />
     </section>
 
     <aside
       class="panel-right"
-      class:collapsed={rightPanelCollapsed}
-      style:width={rightPanelCollapsed ? 'var(--panel-collapsed-width)' : `${rightPanelWidth}px`}
+      class:collapsed={$ui.rightPanelCollapsed}
+      style:width={$ui.rightPanelCollapsed ? 'var(--panel-collapsed-width)' : `${rightPanelWidth}px`}
     >
-      {#if !rightPanelCollapsed}
+      {#if !$ui.rightPanelCollapsed}
         <div
           class="resize-handle resize-handle-left"
           on:mousedown={startResizeRight}
@@ -171,10 +344,21 @@
           aria-orientation="vertical"
         ></div>
       {/if}
-      <CommandPanel collapsed={rightPanelCollapsed} onToggle={toggleRightPanel} />
+      <CommandPanel collapsed={$ui.rightPanelCollapsed} onToggle={toggleRightPanel} />
     </aside>
   </main>
 </div>
+
+<RepoConfigModal open={configOpen} onClose={closeConfig} />
+<SessionContextMenu
+  on:inspect={handleInspect}
+  on:focus={handleFocus}
+  on:pause={handlePause}
+  on:resume={handleResume}
+  on:stop={handleStop}
+  on:openLogs={handleOpenLogs}
+/>
+<Toast />
 
 <style>
   .app {
@@ -211,6 +395,107 @@
     display: flex;
     align-items: center;
     gap: var(--space-4);
+  }
+
+  .connection-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-border);
+    box-shadow: 0 0 0 2px var(--color-surface);
+  }
+
+  .status-label {
+    min-width: 90px;
+  }
+
+  .connection-status.status-online .status-dot {
+    background: var(--color-success);
+    box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
+  }
+
+  .connection-status.status-reconnecting .status-dot {
+    background: var(--color-warning);
+    animation: glow-pulse 1.2s var(--ease-smooth) infinite;
+  }
+
+  .connection-status.status-offline .status-dot {
+    background: var(--color-danger);
+  }
+
+  .panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-smooth),
+                color var(--duration-fast) var(--ease-smooth),
+                background-color var(--duration-fast) var(--ease-smooth);
+  }
+
+  .panel-toggle:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    background: var(--color-surface-alt);
+  }
+
+  .offline-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: var(--color-surface-alt);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .config-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    background: transparent;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-smooth),
+                color var(--duration-fast) var(--ease-smooth),
+                background-color var(--duration-fast) var(--ease-smooth);
+  }
+
+  .config-btn:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    background: var(--color-surface-alt);
+  }
+
+  .config-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
 
   .workspace {
