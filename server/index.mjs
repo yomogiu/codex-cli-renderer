@@ -35,10 +35,6 @@ function broadcast(message) {
 const supervisor = createSessionSupervisor({ onEvent: broadcast, logger: app.log });
 const codexBridge = createCodexBridge({ onEvent: broadcast, logger: app.log });
 
-if (ENABLE_CODEX_BRIDGE) {
-  codexBridge.start();
-}
-
 app.get('/api/stream', (request, reply) => {
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -69,13 +65,16 @@ app.get('/api/stream', (request, reply) => {
 
 app.get('/api/health', async () => ({
   status: 'ok',
-  codexBridge: codexBridge.isRunning(),
+  codexBridge: codexBridge.isAnyRunning(),
 }));
 
 app.post('/api/sessions/start', async (request, reply) => {
   const { sessionId, repoPath, prompt, templateId, profile } = request.body || {};
   try {
     const session = supervisor.startSession({ sessionId, repoPath, prompt, templateId, profile });
+    if (ENABLE_CODEX_BRIDGE) {
+      codexBridge.startSession({ sessionId: session.id, repoPath: session.repoPath || repoPath });
+    }
     return {
       runId: session.runId,
       sessionId: session.id,
@@ -83,6 +82,7 @@ app.post('/api/sessions/start', async (request, reply) => {
       startedAt: session.startedAt,
     };
   } catch (error) {
+    app.log.error({ err: error }, 'Failed to start session');
     reply.code(400);
     return { error: error?.message || 'Failed to start session.' };
   }
@@ -119,6 +119,9 @@ app.post('/api/sessions/:sessionId/stop', async (request, reply) => {
   if (!session) {
     reply.code(404);
     return { error: 'Session not found.' };
+  }
+  if (ENABLE_CODEX_BRIDGE) {
+    codexBridge.stopSession(request.params.sessionId);
   }
   return {
     sessionId: session.id,

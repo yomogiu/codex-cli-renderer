@@ -1,5 +1,7 @@
 import pty from 'node-pty';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 const DEFAULT_CMD = process.env.CODEX_CMD || 'codex';
 const DEFAULT_ARGS_RAW = process.env.CODEX_ARGS || 'run';
@@ -30,6 +32,31 @@ function replaceTokens(value, replacements) {
     const replacement = replacements[key];
     return replacement === undefined || replacement === null ? '' : String(replacement);
   });
+}
+
+function resolveExecutable(command, args) {
+  if (!command || typeof command !== 'string') {
+    return { cmd: command, args };
+  }
+
+  if (!command.includes(path.sep)) {
+    return { cmd: command, args };
+  }
+
+  try {
+    const resolved = fs.realpathSync(command);
+    const ext = path.extname(resolved).toLowerCase();
+    if (['.js', '.mjs', '.cjs'].includes(ext)) {
+      return {
+        cmd: process.execPath,
+        args: [resolved, ...args],
+      };
+    }
+  } catch {
+    // Fall through to original command.
+  }
+
+  return { cmd: command, args };
 }
 
 function createRunId() {
@@ -76,16 +103,32 @@ export function createSessionSupervisor({ onEvent, logger } = {}) {
 
     const runId = createRunId();
     const cwd = repoPath || DEFAULT_CWD;
+    try {
+      const stat = fs.statSync(cwd);
+      if (!stat.isDirectory()) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error(`Repo path not found or not a directory: ${cwd}`);
+    }
     const { cmd, args, usesPrompt } = buildCommand({
       prompt,
       repoPath: cwd,
       sessionId,
       profile,
     });
+    const spawnSpec = resolveExecutable(cmd, args);
+    if (spawnSpec.cmd && typeof spawnSpec.cmd === 'string' && spawnSpec.cmd.includes(path.sep)) {
+      try {
+        fs.accessSync(spawnSpec.cmd, fs.constants.X_OK);
+      } catch {
+        throw new Error(`Command is not executable: ${spawnSpec.cmd}`);
+      }
+    }
 
     let ptyProcess;
     try {
-      ptyProcess = pty.spawn(cmd, args, {
+      ptyProcess = pty.spawn(spawnSpec.cmd, spawnSpec.args, {
         name: 'xterm-color',
         cols: Number.isFinite(DEFAULT_COLS) ? DEFAULT_COLS : 120,
         rows: Number.isFinite(DEFAULT_ROWS) ? DEFAULT_ROWS : 30,
@@ -177,7 +220,7 @@ export function createSessionSupervisor({ onEvent, logger } = {}) {
       }, 100);
     }
 
-    logger?.info?.({ sessionId, runId, cmd, args }, 'Session started');
+    logger?.info?.({ sessionId, runId, cmd: spawnSpec.cmd, args: spawnSpec.args }, 'Session started');
     return session;
   }
 

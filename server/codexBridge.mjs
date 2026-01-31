@@ -1,11 +1,13 @@
 import { spawn } from 'child_process';
 import readline from 'readline';
+import fs from 'fs';
+import path from 'path';
 
 const DEFAULT_CMD = process.env.CODEX_APP_SERVER_CMD || process.env.CODEX_CMD || 'codex';
 const DEFAULT_ARGS_RAW = process.env.CODEX_APP_SERVER_ARGS || 'app-server';
 const AUTO_RESTART = (process.env.CODEX_APP_SERVER_AUTO_RESTART || 'true') !== 'false';
 const RESTART_DELAY_MS = Number.parseInt(process.env.CODEX_APP_SERVER_RESTART_MS || '3000', 10);
-const DEFAULT_SESSION_ID = process.env.CODEX_SESSION_ID || 'default-session';
+const DEFAULT_CWD = process.cwd();
 
 function parseArgs(raw) {
   if (!raw) return [];
@@ -33,10 +35,34 @@ function pickFirst(...values) {
   return null;
 }
 
+function resolveExecutable(command, args) {
+  if (!command || typeof command !== 'string') {
+    return { cmd: command, args };
+  }
+
+  if (!command.includes(path.sep)) {
+    return { cmd: command, args };
+  }
+
+  try {
+    const resolved = fs.realpathSync(command);
+    const ext = path.extname(resolved).toLowerCase();
+    if (['.js', '.mjs', '.cjs'].includes(ext)) {
+      return {
+        cmd: process.execPath,
+        args: [resolved, ...args],
+      };
+    }
+  } catch {
+    // Fall through to original command.
+  }
+
+  return { cmd: command, args };
+}
+
 export function createCodexBridge({ onEvent, logger } = {}) {
-  let child = null;
-  let restartTimer = null;
   const args = parseArgs(DEFAULT_ARGS_RAW);
+  const processes = new Map();
 
   function emit(event) {
     if (typeof onEvent === 'function') {
@@ -44,13 +70,13 @@ export function createCodexBridge({ onEvent, logger } = {}) {
     }
   }
 
-  function formatEvent(payload, fallback = {}) {
-    const sessionId = pickFirst(
+  function formatEvent(payload, sessionId, fallback = {}) {
+    const resolvedSessionId = pickFirst(
       payload?.sessionId,
       payload?.repoId,
       payload?.params?.sessionId,
       payload?.params?.repoId,
-      DEFAULT_SESSION_ID
+      sessionId
     );
     const runId = pickFirst(
       payload?.runId,
@@ -62,7 +88,7 @@ export function createCodexBridge({ onEvent, logger } = {}) {
 
     return {
       type: 'codex.event',
-      sessionId,
+      sessionId: resolvedSessionId || sessionId,
       runId,
       eventType,
       message: message || '',
@@ -71,7 +97,7 @@ export function createCodexBridge({ onEvent, logger } = {}) {
     };
   }
 
-  function handleLine(line, source = 'stdout') {
+  function handleLine(line, source, sessionId) {
     if (!line) return;
     let payload = null;
     try {
@@ -79,76 +105,124 @@ export function createCodexBridge({ onEvent, logger } = {}) {
     } catch {
       payload = { raw: line, source };
     }
-    const event = formatEvent(payload, {
+    const event = formatEvent(payload, sessionId, {
       eventType: source === 'stderr' ? 'stderr' : 'raw',
       message: typeof line === 'string' ? line : '',
     });
     emit(event);
   }
 
-  function attachStream(stream, source) {
-    if (!stream) return;
+  function attachStream(stream, source, sessionId) {
+    if (!stream) return null;
     const rl = readline.createInterface({ input: stream });
-    rl.on('line', (line) => handleLine(line, source));
+    rl.on('line', (line) => handleLine(line, source, sessionId));
     rl.on('close', () => {
       rl.removeAllListeners();
     });
+    return rl;
   }
 
-  function start() {
-    if (child) return;
+  function scheduleRestart(sessionId) {
+    if (!AUTO_RESTART) return;
+    const existing = processes.get(sessionId);
+    if (!existing) return;
+    clearTimeout(existing.restartTimer);
+    existing.restartTimer = setTimeout(() => {
+      const current = processes.get(sessionId);
+      if (!current || current.child) return;
+      startSession({ sessionId, repoPath: current.repoPath });
+    }, RESTART_DELAY_MS);
+  }
+
+  function startSession({ sessionId, repoPath } = {}) {
+    if (!sessionId) {
+      throw new Error('sessionId is required to start Codex app-server.');
+    }
+
+    const existing = processes.get(sessionId);
+    if (existing?.child) {
+      return existing;
+    }
+
+    const cwd = repoPath || existing?.repoPath || DEFAULT_CWD;
+    const entry = existing || { child: null, repoPath: cwd, restartTimer: null };
+    entry.repoPath = cwd;
+    processes.set(sessionId, entry);
+
+    const spawnSpec = resolveExecutable(DEFAULT_CMD, args);
     try {
-      child = spawn(DEFAULT_CMD, args, {
+      entry.child = spawn(spawnSpec.cmd, spawnSpec.args, {
         env: { ...process.env },
+        cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      logger?.error?.({ error }, 'Failed to start Codex app-server');
-      if (AUTO_RESTART) {
-        restartTimer = setTimeout(() => {
-          child = null;
-          start();
-        }, RESTART_DELAY_MS);
-      }
-      return;
+      logger?.error?.({ error, sessionId }, 'Failed to start Codex app-server');
+      entry.child = null;
+      scheduleRestart(sessionId);
+      return entry;
     }
 
-    attachStream(child.stdout, 'stdout');
-    attachStream(child.stderr, 'stderr');
+    const stdoutRl = attachStream(entry.child.stdout, 'stdout', sessionId);
+    const stderrRl = attachStream(entry.child.stderr, 'stderr', sessionId);
 
-    child.on('error', (error) => {
-      logger?.error?.({ error }, 'Codex app-server failed to start');
-      child = null;
-      if (AUTO_RESTART) {
-        restartTimer = setTimeout(() => start(), RESTART_DELAY_MS);
-      }
+    entry.child.on('error', (error) => {
+      logger?.error?.({ error, sessionId }, 'Codex app-server failed to start');
+      stdoutRl?.close();
+      stderrRl?.close();
+      entry.child = null;
+      scheduleRestart(sessionId);
     });
 
-    child.on('exit', (code, signal) => {
-      logger?.warn?.({ code, signal }, 'Codex app-server exited');
-      child = null;
-      if (AUTO_RESTART) {
-        restartTimer = setTimeout(() => start(), RESTART_DELAY_MS);
-      }
+    entry.child.on('exit', (code, signal) => {
+      logger?.warn?.({ code, signal, sessionId }, 'Codex app-server exited');
+      stdoutRl?.close();
+      stderrRl?.close();
+      entry.child = null;
+      scheduleRestart(sessionId);
     });
 
-    logger?.info?.({ cmd: DEFAULT_CMD, args }, 'Codex app-server bridge started');
+    logger?.info?.({ cmd: spawnSpec.cmd, args: spawnSpec.args, sessionId, cwd }, 'Codex app-server bridge started');
+    return entry;
   }
 
-  function stop() {
-    if (restartTimer) {
-      clearTimeout(restartTimer);
-      restartTimer = null;
+  function stopSession(sessionId) {
+    const entry = processes.get(sessionId);
+    if (!entry) return;
+    if (entry.restartTimer) {
+      clearTimeout(entry.restartTimer);
+      entry.restartTimer = null;
     }
-    if (child) {
-      child.kill();
-      child = null;
+    if (entry.child) {
+      entry.child.kill();
+      entry.child = null;
     }
+  }
+
+  function stopAll() {
+    for (const sessionId of processes.keys()) {
+      stopSession(sessionId);
+    }
+    processes.clear();
+  }
+
+  function isRunning(sessionId) {
+    if (!sessionId) return false;
+    return Boolean(processes.get(sessionId)?.child);
+  }
+
+  function isAnyRunning() {
+    for (const entry of processes.values()) {
+      if (entry.child) return true;
+    }
+    return false;
   }
 
   return {
-    start,
-    stop,
-    isRunning: () => Boolean(child),
+    startSession,
+    stopSession,
+    stopAll,
+    isRunning,
+    isAnyRunning,
   };
 }
