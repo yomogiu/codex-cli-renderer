@@ -1,0 +1,304 @@
+/* ==========================================================================
+   Animations - Grand Strategy Aesthetic
+   ========================================================================== */
+
+/* ==========================================================================
+   Keyframe Definitions
+   ========================================================================== */
+
+/* Pulse Animation - Working State */
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: var(--shadow-glow-working);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(45, 125, 70, 0.6);
+    transform: scale(1.02);
+  }
+}
+
+/* Pulse Animation - Gold Accent */
+@keyframes pulse-gold {
+  0%, 100% {
+    box-shadow: var(--shadow-glow-gold);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(201, 162, 39, 0.5);
+  }
+}
+
+/* Error Shake */
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-4px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(4px);
+  }
+}
+
+/* Spin - Loading/Working Icon */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Fade In */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Fade Out */
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Slide In from Right (Panels) */
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Slide In from Left (Panels) */
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Slide Down (Accordions, Dropdowns) */
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Slide Up (Toasts) */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scale In (Modals, Context Menus) */
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Scale Out */
+@keyframes scale-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* Bounce In (Notifications, Badges) */
+@keyframes bounce-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Glow Pulse - Status Indicator */
+@keyframes glow-pulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Chevron Rotate (Accordion) */
+@keyframes chevron-down {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(90deg);
+  }
+}
+
+/* Map Zoom */
+@keyframes zoom-in {
+  from {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ==========================================================================
+   Animation Utility Classes
+   ========================================================================== */
+
+/* Pulse States */
+.animate-pulse {
+  animation: pulse 2s var(--ease-smooth) infinite;
+}
+
+.animate-pulse-gold {
+  animation: pulse-gold 2s var(--ease-smooth) infinite;
+}
+
+/* Shake */
+.animate-shake {
+  animation: shake var(--duration-slow) var(--ease-sharp);
+}
+
+/* Spin */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Fade */
+.animate-fade-in {
+  animation: fade-in var(--duration-normal) var(--ease-smooth);
+}
+
+.animate-fade-out {
+  animation: fade-out var(--duration-normal) var(--ease-smooth);
+}
+
+/* Slide */
+.animate-slide-in-right {
+  animation: slide-in-right var(--duration-normal) var(--ease-smooth);
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left var(--duration-normal) var(--ease-smooth);
+}
+
+.animate-slide-down {
+  animation: slide-down var(--duration-fast) var(--ease-smooth);
+}
+
+.animate-slide-up {
+  animation: slide-up var(--duration-normal) var(--ease-bounce);
+}
+
+/* Scale */
+.animate-scale-in {
+  animation: scale-in var(--duration-normal) var(--ease-bounce);
+}
+
+.animate-scale-out {
+  animation: scale-out var(--duration-fast) var(--ease-smooth);
+}
+
+/* Bounce */
+.animate-bounce-in {
+  animation: bounce-in var(--duration-slow) var(--ease-bounce);
+}
+
+/* Glow */
+.animate-glow {
+  animation: glow-pulse 2s var(--ease-smooth) infinite;
+}
+
+/* ==========================================================================
+   Transition Utilities
+   ========================================================================== */
+
+.transition-colors {
+  transition-property: color, background-color, border-color, fill, stroke;
+  transition-timing-function: var(--ease-smooth);
+  transition-duration: var(--duration-fast);
+}
+
+.transition-opacity {
+  transition-property: opacity;
+  transition-timing-function: var(--ease-smooth);
+  transition-duration: var(--duration-fast);
+}
+
+.transition-transform {
+  transition-property: transform;
+  transition-timing-function: var(--ease-smooth);
+  transition-duration: var(--duration-normal);
+}
+
+.transition-all {
+  transition-property: all;
+  transition-timing-function: var(--ease-smooth);
+  transition-duration: var(--duration-normal);
+}
+
+/* ==========================================================================
+   Reduced Motion Support
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

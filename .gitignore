@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+.claude/
+.DS_Store
+dist/
+coverage/
+*.log
+*.log.*
+.env
+.env.*
+.vscode/
+.idea/

@@ -1,0 +1,218 @@
+/* ==========================================================================
+   Design Tokens - Grand Strategy Aesthetic
+   ========================================================================== */
+
+:root {
+  /* ========================================================================
+     Typography
+     ======================================================================== */
+
+  /* Font Families */
+  --font-heading: "Cinzel", "Trajan Pro", serif;
+  --font-body: "Source Sans 3", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-decorative: "Cormorant Garamond", serif;
+
+  /* Font Sizes */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.5rem;
+
+  /* Font Weights */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line Heights */
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* ========================================================================
+     Spacing
+     ======================================================================== */
+
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ========================================================================
+     Border Radius
+     ======================================================================== */
+
+  --radius-none: 0;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* ========================================================================
+     Elevation (per VISUAL-DESIGN.md)
+     ======================================================================== */
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.2);
+  --shadow-glow: 0 0 20px rgba(201, 162, 39, 0.3);
+  --shadow-glow-gold: 0 0 20px rgba(201, 162, 39, 0.4);
+  --shadow-glow-working: 0 0 20px rgba(45, 125, 70, 0.4);
+
+  /* ========================================================================
+     Motion
+     ======================================================================== */
+
+  /* Timing Functions */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-sharp: cubic-bezier(0.4, 0, 0.6, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
+  /* Durations */
+  --duration-instant: 50ms;
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --duration-slower: 600ms;
+
+  /* ========================================================================
+     Z-Index Scale
+     ======================================================================== */
+
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+
+  /* ========================================================================
+     Layout
+     ======================================================================== */
+
+  --panel-width: 320px;
+  --panel-min-width: 280px;
+  --panel-max-width: 400px;
+  --panel-collapsed-width: 48px;
+  --topbar-height: 56px;
+
+  /* ========================================================================
+     Repo Color Presets
+     ======================================================================== */
+
+  --repo-color-gold: #c9a227;
+  --repo-color-forest: #2d7d46;
+  --repo-color-crimson: #8b2942;
+  --repo-color-slate: #4a6fa5;
+  --repo-color-purple: #6b4c9a;
+  --repo-color-navy: #2d4a7c;
+  --repo-color-amber: #b8860b;
+  --repo-color-green: #3d7a4a;
+  --repo-color-steel: #5c6b7a;
+  --repo-color-bronze: #8b4513;
+  --repo-color-teal: #2f4f4f;
+  --repo-color-charcoal: #4a4a4a;
+}
+
+/* ==========================================================================
+   Light Theme (Parchment)
+   ========================================================================== */
+
+:root {
+  /* Primary Colors */
+  --color-primary: #1a2744;
+  --color-primary-hover: #2d4a7c;
+  --color-accent: #c9a227;
+  --color-accent-hover: #dab432;
+
+  /* Background & Surfaces */
+  --color-bg: #ebe0cc;
+  --color-surface: #f4e9d9;
+  --color-surface-alt: #d4c4a8;
+  --color-surface-elevated: #faf5ed;
+
+  /* Text */
+  --color-text: #1c1c1e;
+  --color-text-muted: #5c5c5e;
+  --color-text-inverse: #f4e9d9;
+
+  /* Borders */
+  --color-border: #c4b49a;
+  --color-border-strong: #a89878;
+
+  /* Status Colors */
+  --color-status-idle: #5c6b7a;
+  --color-status-working: #2d7d46;
+  --color-status-blocked: #b8860b;
+  --color-status-error: #8b2942;
+
+  /* Semantic Colors */
+  --color-success: #3d7a4a;
+  --color-warning: #a67c00;
+  --color-info: #4a6fa5;
+  --color-danger: #8b2942;
+
+  /* Overlay */
+  --color-overlay: rgba(28, 28, 30, 0.5);
+}
+
+/* ==========================================================================
+   Dark Theme (Command Center)
+   ========================================================================== */
+
+.dark {
+  /* Primary Colors */
+  --color-primary: #2d4a7c;
+  --color-primary-hover: #3d5a8c;
+  --color-accent: #c9a227;
+  --color-accent-hover: #dab432;
+
+  /* Background & Surfaces */
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-alt: #1c2128;
+  --color-surface-elevated: #21262d;
+
+  /* Text */
+  --color-text: #e6edf3;
+  --color-text-muted: #8b949e;
+  --color-text-inverse: #0d1117;
+
+  /* Borders */
+  --color-border: #30363d;
+  --color-border-strong: #484f58;
+
+  /* Status Colors (brighter for dark bg) */
+  --color-status-idle: #6e7681;
+  --color-status-working: #3fb950;
+  --color-status-blocked: #d29922;
+  --color-status-error: #f85149;
+
+  /* Semantic Colors */
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-info: #58a6ff;
+  --color-danger: #f85149;
+
+  /* Overlay */
+  --color-overlay: rgba(0, 0, 0, 0.6);
+
+}
+
