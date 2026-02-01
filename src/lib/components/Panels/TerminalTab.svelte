@@ -8,6 +8,8 @@
   import { createPtySocket, sendResize } from '../../api/pty.js';
   import 'xterm/css/xterm.css';
 
+  export let active = true;
+
   let containerEl;
   let terminal;
   let fitAddon;
@@ -19,7 +21,15 @@
   let connectionState = 'idle';
   let errorMessage = '';
   let currentSignature = null;
+  let terminalReady = false;
+  let resizeTimer = null;
+  let lastResizeCols = null;
+  let lastResizeRows = null;
   const decoder = new TextDecoder();
+  const MIN_COLS = 20;
+  const MIN_ROWS = 5;
+  const MAX_COLS = 240;
+  const MAX_ROWS = 300;
 
   $: selectedSessionId = $ui.selectedSessionId;
   $: selectedSession = $sessionsWithRepos.find((session) => session.id === selectedSessionId);
@@ -41,11 +51,84 @@
     };
   }
 
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function clampSize(cols, rows) {
+    const safeCols = clamp(cols, MIN_COLS, MAX_COLS);
+    const safeRows = clamp(rows, MIN_ROWS, MAX_ROWS);
+    return { cols: safeCols, rows: safeRows };
+  }
+
+  function applyFit() {
+    if (!terminal || !fitAddon) return null;
+    if (typeof fitAddon.proposeDimensions === 'function') {
+      const proposed = fitAddon.proposeDimensions();
+      if (proposed?.cols && proposed?.rows) {
+        const { cols, rows } = clampSize(proposed.cols, proposed.rows);
+        if (cols !== terminal.cols || rows !== terminal.rows) {
+          terminal.resize(cols, rows);
+        }
+        return { cols, rows };
+      }
+    }
+    try {
+      fitAddon.fit();
+    } catch {
+      // Ignore fit errors while the renderer is initializing.
+    }
+    if (Number.isFinite(terminal?.cols) && Number.isFinite(terminal?.rows)) {
+      return clampSize(terminal.cols, terminal.rows);
+    }
+    return null;
+  }
+
+  function safeFit() {
+    if (!terminal || !fitAddon || !terminalReady) return;
+    applyFit();
+  }
+
+  function sendResizeIfNeeded() {
+    if (!socket || socket.readyState !== WebSocket.OPEN || !terminal) return;
+    const { cols, rows } = clampSize(terminal.cols, terminal.rows);
+    if (cols === lastResizeCols && rows === lastResizeRows) return;
+    lastResizeCols = cols;
+    lastResizeRows = rows;
+    sendResize(socket, cols, rows);
+  }
+
+  function scheduleResizeUpdate() {
+    if (resizeTimer) return;
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      if (!terminal || !terminalReady || !active) return;
+      safeFit();
+      sendResizeIfNeeded();
+    }, 120);
+  }
+
+  function ensureResizeObserver() {
+    if (resizeObserver || !containerEl || !terminal || !fitAddon) return;
+    resizeObserver = new ResizeObserver(() => {
+      if (!terminal || !fitAddon || !terminalReady || !active) return;
+      scheduleResizeUpdate();
+    });
+    resizeObserver.observe(containerEl);
+  }
+
+  function teardownResizeObserver() {
+    if (!resizeObserver) return;
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+
   async function initTerminal() {
     if (terminal || !containerEl) return;
     await tick();
+    if (!containerEl) return;
 
-    terminal = new Terminal({
+    const nextTerminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
       scrollback: 2000,
@@ -54,36 +137,56 @@
       theme: buildTheme(),
     });
 
-    fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(containerEl);
-    fitAddon.fit();
+    const nextFitAddon = new FitAddon();
+    nextTerminal.loadAddon(nextFitAddon);
+    nextTerminal.open(containerEl);
 
-    resizeObserver = new ResizeObserver(() => {
-      if (!terminal || !fitAddon) return;
-      fitAddon.fit();
-      sendResize(socket, terminal.cols, terminal.rows);
-    });
-    resizeObserver.observe(containerEl);
+    terminal = nextTerminal;
+    fitAddon = nextFitAddon;
+    terminalReady = true;
+
+    if (active) {
+      safeFit();
+      ensureResizeObserver();
+      sendResizeIfNeeded();
+    }
+
+    if (outputBuffer) {
+      scheduleFlush();
+    }
   }
 
   function queueOutput(payload) {
     if (!terminal) return;
     const text = payload instanceof ArrayBuffer ? decoder.decode(payload) : payload?.toString?.() || '';
     outputBuffer += text;
-    if (!flushTimer) {
-      flushTimer = setTimeout(() => {
-        const next = outputBuffer;
-        outputBuffer = '';
-        flushTimer = null;
-        if (next) {
-          terminal.write(next);
-        }
-      }, 16);
+    if (!terminalReady) return;
+    scheduleFlush();
+  }
+
+  function clearOutputBuffer() {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
     }
+    outputBuffer = '';
+  }
+
+  function scheduleFlush() {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      const activeTerminal = terminal;
+      const next = outputBuffer;
+      outputBuffer = '';
+      flushTimer = null;
+      if (next && activeTerminal) {
+        activeTerminal.write(next);
+      }
+    }, 16);
   }
 
   function cleanupSocket() {
+    clearOutputBuffer();
     if (dataDisposable) {
       dataDisposable.dispose();
       dataDisposable = null;
@@ -95,6 +198,8 @@
     connectionState = 'idle';
     errorMessage = '';
     currentSignature = null;
+    lastResizeCols = null;
+    lastResizeRows = null;
   }
 
   function attachToSession() {
@@ -111,8 +216,9 @@
     errorMessage = '';
     terminal.clear();
 
+    const { cols, rows } = clampSize(terminal.cols, terminal.rows);
     try {
-      socket = createPtySocket({ repoPath, cols: terminal.cols, rows: terminal.rows });
+      socket = createPtySocket({ repoPath, cols, rows });
     } catch (error) {
       errorMessage = error?.message || 'Failed to create PTY connection.';
       connectionState = 'error';
@@ -121,7 +227,7 @@
 
     socket.addEventListener('open', () => {
       connectionState = 'online';
-      sendResize(socket, terminal.cols, terminal.rows);
+      sendResizeIfNeeded();
     });
 
     socket.addEventListener('message', (event) => {
@@ -141,17 +247,26 @@
         socket.send(data);
       }
     });
-  }
 
-  $: if (terminal) {
-    $theme;
-    terminal.options.theme = buildTheme();
-    if (terminal.rows > 0) {
-      terminal.refresh(0, terminal.rows - 1);
+    if (active) {
+      ensureResizeObserver();
+      scheduleResizeUpdate();
     }
   }
 
-  $: if (containerEl && !terminal) {
+  $: if (terminal && terminalReady) {
+    $theme;
+    terminal.options.theme = buildTheme();
+    if (terminal.rows > 0) {
+      try {
+        terminal.refresh(0, terminal.rows - 1);
+      } catch {
+        // Ignore refresh errors during renderer setup/teardown.
+      }
+    }
+  }
+
+  $: if (active && containerEl && !terminal) {
     initTerminal();
   }
 
@@ -163,18 +278,29 @@
     }
   }
 
+  $: if (!active) {
+    teardownResizeObserver();
+  }
+
   onMount(async () => {
-    await initTerminal();
-    attachToSession();
+    if (active) {
+      await initTerminal();
+      attachToSession();
+    }
   });
 
   onDestroy(() => {
     cleanupSocket();
-    resizeObserver?.disconnect();
+    teardownResizeObserver();
+    if (resizeTimer) {
+      clearTimeout(resizeTimer);
+      resizeTimer = null;
+    }
     if (terminal) {
       terminal.dispose();
       terminal = null;
     }
+    terminalReady = false;
   });
 </script>
 

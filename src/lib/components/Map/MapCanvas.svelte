@@ -24,6 +24,7 @@
   const GRID_SIZE = 40;
   const UNIT_WIDTH = 100;
   const UNIT_HEIGHT = 120;
+  const ENABLE_REPO_DRAG = false;
 
   // Selection and drag state
   let selectedSessionId = null;
@@ -509,6 +510,12 @@
     ui.setSelectedSessionId(sessionId);
     ui.setIntelTab('terminal');
     ui.closeContextMenu();
+
+    if (!ENABLE_REPO_DRAG) {
+      redrawUnits();
+      return;
+    }
+
     isDraggingUnit = true;
     draggedSessionId = sessionId;
     lastDragPosition = null;
@@ -551,6 +558,7 @@
   }
 
   function handleStageDrag(e) {
+    if (!ENABLE_REPO_DRAG) return;
     if (!isDraggingUnit || !draggedSessionId) return;
 
     const localPos = e.getLocalPosition(worldContainer);
@@ -563,6 +571,7 @@
   }
 
   function handleStageDragEnd() {
+    if (!ENABLE_REPO_DRAG) return;
     if (isDraggingUnit) {
       if (draggedSessionId && lastDragPosition) {
         sessions.updatePosition(draggedSessionId, lastDragPosition, { persist: true });

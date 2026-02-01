@@ -53,9 +53,10 @@
     </div>
 
     <div class="tab-content" class:terminal={$ui.intelTab === 'terminal'}>
-      {#if $ui.intelTab === 'terminal'}
-        <TerminalTab />
-      {:else if $ui.intelTab === 'logs'}
+      <div class="terminal-pane" class:active={$ui.intelTab === 'terminal'}>
+        <TerminalTab active={$ui.intelTab === 'terminal'} />
+      </div>
+      {#if $ui.intelTab === 'logs'}
         <div class="logs-list">
           {#if !selectedSessionId}
             <p class="empty-state">Select a session to view logs.</p>
@@ -163,6 +164,16 @@
 
   .tab-content.terminal {
     overflow: hidden;
+  }
+
+  .terminal-pane {
+    display: none;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .terminal-pane.active {
+    display: flex;
   }
 
   /* Logs */

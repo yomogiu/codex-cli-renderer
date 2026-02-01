@@ -1,3 +1,4 @@
+import '../server/env.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -184,14 +185,15 @@ wss.on('connection', (ws, req) => {
   session.lastActiveAt = Date.now();
   clearTimeout(session.idleTimer);
 
-  ws.on('message', (data) => {
+  ws.on('message', (data, isBinary) => {
     session.lastActiveAt = Date.now();
-    if (data instanceof Buffer) {
-      session.pty.write(data.toString());
+    if (isBinary) {
+      const binaryText = Buffer.isBuffer(data) ? data.toString() : Buffer.from(data).toString();
+      session.pty.write(binaryText);
       return;
     }
 
-    const text = data.toString();
+    const text = typeof data === 'string' ? data : data.toString();
     if (text.startsWith('{')) {
       try {
         const payload = JSON.parse(text);

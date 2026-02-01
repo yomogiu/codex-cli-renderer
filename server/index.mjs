@@ -1,3 +1,4 @@
+import './env.mjs';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { createSessionSupervisor } from './sessionSupervisor.mjs';

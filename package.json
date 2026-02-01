@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/fix-pty-perms.mjs",
     "dev": "vite dev",
     "pty": "node scripts/pty-server.mjs",
     "server": "node server/index.mjs",

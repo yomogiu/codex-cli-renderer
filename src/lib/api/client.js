@@ -17,7 +17,16 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    let message = text;
+    try {
+      const data = JSON.parse(text);
+      if (data && typeof data === 'object') {
+        message = data.error || data.message || text;
+      }
+    } catch {
+      // Ignore JSON parse errors; keep the raw text.
+    }
+    throw new Error(message || `Request failed with status ${response.status}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
